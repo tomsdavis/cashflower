@@ -4,12 +4,14 @@ import functools
 import getpass
 import importlib
 import inspect
+import json
 import multiprocessing
 import networkx as nx
 import numpy as np
 import os
 import pandas as pd
 import shutil
+
 
 from .core import ArrayVariable, Model, ModelPointSet, Runplan, StochasticVariable, Variable
 from .error import CashflowModelError
@@ -35,6 +37,8 @@ def load_settings(settings=None):
         "SAVE_DIAGNOSTIC": True,
         "SAVE_LOG": True,
         "SAVE_OUTPUT": True,
+        "SAVE_GRAPH": True,
+        "SAVE_CODE": True,
         "T_MAX_CALCULATION": 720,
         "T_MAX_OUTPUT": 720,
     }
@@ -153,6 +157,9 @@ def resolve_calculation_order(variables, output_columns):
     if output_columns is not None:
         variables, dg = filter_variables_and_graph(output_columns, variables, dg)
 
+    output_graph = dg.copy()
+    output_code = {v.name: inspect.getsource(getattr(v,'func')) for v in variables}
+
     # [4] Set calculation order of variables ('calc_order')
     calc_order = 0
     while dg.nodes:
@@ -217,7 +224,7 @@ def resolve_calculation_order(variables, output_columns):
     # [6] Set calculation direction of calculation ('calc_direction' attribute)
     variables = set_calc_direction(variables)
 
-    return variables
+    return variables, output_graph, output_code
 
 
 def start_single_core(settings, args):
@@ -226,7 +233,7 @@ def start_single_core(settings, args):
     print_log("Reading model components...", show_time=True)
     runplan, model_point_sets, variables = prepare_model_input(settings, args)
     output_columns = None if len(settings["OUTPUT_COLUMNS"]) == 0 else settings["OUTPUT_COLUMNS"]
-    variables = resolve_calculation_order(variables, output_columns)
+    variables, output_graph, output_code = resolve_calculation_order(variables, output_columns)
 
     # Log runplan version and number of model points
     if runplan is not None:
@@ -237,7 +244,7 @@ def start_single_core(settings, args):
     # Run model on single core
     model = Model(variables, model_point_sets, settings)
     output, runtime = model.run()
-    return output, runtime
+    return output, runtime, output_graph, output_code
 
 
 def start_multiprocessing(part, settings, args):
@@ -249,7 +256,7 @@ def start_multiprocessing(part, settings, args):
     print_log("Reading model components...", show_time=True, visible=one_core)
     runplan, model_point_sets, variables = prepare_model_input(settings, args)
     output_columns = None if len(settings["OUTPUT_COLUMNS"]) == 0 else settings["OUTPUT_COLUMNS"]
-    variables = resolve_calculation_order(variables, output_columns)
+    variables, output_graph, output_code = resolve_calculation_order(variables, output_columns)
 
     # Log runplan version and number of model points
     if runplan is not None:
@@ -267,7 +274,7 @@ def start_multiprocessing(part, settings, args):
         part_output, part_runtime = None, None
     else:
         part_output, part_runtime = model_run
-    return part_output, part_runtime
+    return part_output, part_runtime, output_graph, output_code
 
 
 def merge_part_outputs(part_outputs, settings):
@@ -336,9 +343,10 @@ def run(settings=None, path=None):
 
     # Run on single core
     if not settings["MULTIPROCESSING"]:
-        output, diagnostic = start_single_core(settings, args=args)
+        output, diagnostic, output_graph, output_code = start_single_core(settings, args=args)
 
     # Run on multiple cores
+    #TODO return graph info in multiprocessing case
     if settings["MULTIPROCESSING"]:
         p = functools.partial(start_multiprocessing, settings=settings, args=args)
         cpu_count = multiprocessing.cpu_count()
@@ -361,7 +369,7 @@ def run(settings=None, path=None):
     print_log("")
 
     # Save to csv files
-    if settings["SAVE_OUTPUT"] or settings["SAVE_DIAGNOSTIC"] or settings["SAVE_LOG"]:
+    if settings["SAVE_OUTPUT"] or settings["SAVE_DIAGNOSTIC"] or settings["SAVE_LOG"] or settings["SAVE_GRAPH"] or settings["SAVE_CODE"]:
         if not os.path.exists("output"):
             os.makedirs("output")
 
@@ -379,6 +387,17 @@ def run(settings=None, path=None):
             filepath = f"output/{timestamp}_log.txt"
             print_log(f"Saving log file: {filepath}", show_time=True)
             save_log_to_file(timestamp)
+
+        if settings["SAVE_GRAPH"]:
+            filepath = f"output/{timestamp}_graph.xml"
+            print_log(f"Saving graph file: {filepath}", show_time=True)
+            nx.write_graphml(output_graph, filepath)
+
+        if settings["SAVE_CODE"]:
+            filepath = f"output/{timestamp}_code.json"
+            print_log(f"Saving code snapshot: {filepath}", show_time=True)
+            with open(filepath, 'w') as file:
+                json.dump(output_code, file)
 
     print(f"{'-' * 72}\n")
     return output
