@@ -1,4 +1,5 @@
 import functools
+import inspect
 import time
 import multiprocessing
 import numpy as np
@@ -58,13 +59,13 @@ def variable(array=False, aggregation_type="sum"):
 
         # Create a variable
         if array:
-            v = ArrayVariable(func, aggregation_type)
+            v = ArrayVariable(func, aggregation_type, 'A')
         elif func.__code__.co_argcount == 0:
-            v = ConstantVariable(func, aggregation_type)
+            v = ConstantVariable(func, aggregation_type, 'C')
         elif func.__code__.co_argcount == 2:
-            v = StochasticVariable(func, aggregation_type)
+            v = StochasticVariable(func, aggregation_type, 'S')
         else:
-            v = Variable(func, aggregation_type)
+            v = Variable(func, aggregation_type, 'V')
 
         return v
     return wrapper
@@ -77,9 +78,10 @@ class Variable:
     def my_var(t):
         ...
     """
-    def __init__(self, func, aggregation_type):
+    def __init__(self, func, aggregation_type, var_type):
         self.func = func
         self.aggregation_type = aggregation_type
+        self.var_type = var_type
         self.name = None
         self.calc_direction = None
         self.calc_order = None
@@ -90,6 +92,13 @@ class Variable:
 
     def __repr__(self):
         return f"V: {self.func.__name__}"
+
+    def to_dict(self):
+        return {self.name:
+                {'source': inspect.getsource(self.func),
+                 'agg_type': self.aggregation_type,
+                 'var_type': self.var_type}}
+
 
     def __call__(self, t=None):
         if t is None:
@@ -135,8 +144,8 @@ class ConstantVariable(Variable):
     def my_var():
         ...
     """
-    def __init__(self, func, aggregation_type):
-        Variable.__init__(self, func, aggregation_type)
+    def __init__(self, func, aggregation_type, var_type):
+        Variable.__init__(self, func, aggregation_type, var_type)
 
     def __repr__(self):
         return f"CV: {self.func.__name__}"
@@ -160,8 +169,8 @@ class ArrayVariable(Variable):
     def my_var():
         ...
     """
-    def __init__(self, func, aggregation_type):
-        Variable.__init__(self, func, aggregation_type)
+    def __init__(self, func, aggregation_type, var_type):
+        Variable.__init__(self, func, aggregation_type, var_type)
 
     def __repr__(self):
         return f"AV: {self.func.__name__}"
@@ -177,8 +186,8 @@ class StochasticVariable(Variable):
     def my_var(t, stoch):
         ...
     """
-    def __init__(self, func, aggregation_type):
-        Variable.__init__(self, func, aggregation_type)
+    def __init__(self, func, aggregation_type, var_type):
+        Variable.__init__(self, func, aggregation_type, var_type)
         self.result_stoch = None
 
     def __repr__(self):
